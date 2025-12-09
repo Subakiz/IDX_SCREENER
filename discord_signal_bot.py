@@ -30,7 +30,7 @@ def _coerce_env_number(raw: Optional[str], cast: Callable[[str], T], env_name: s
         return None
     try:
         return cast(raw)
-    except Exception as exc:
+    except (ValueError, TypeError, argparse.ArgumentTypeError) as exc:
         raise SystemExit(f"{env_name} must be numeric; received {raw!r}") from exc
 
 
@@ -210,6 +210,7 @@ def main() -> None:
     signal = _parse_args()
     bot = SignalBot(channel_id_int, initial_signal=signal)
     bot.run(token)
+
 
 if __name__ == "__main__":
     main()
