@@ -24,6 +24,7 @@ pip install -r requirements.txt
   - `TRADE_SYMBOL`, `TRADE_ACTION`, `TRADE_ENTRY`, `TRADE_STOP`, `TRADE_SIZE_LOTS`, `TRADE_NOTE`
   - `BROKER_URL`: Link button destination (e.g., broker trade ticket).
   - `CURRENCY_PREFIX`: Defaults to `Rp`; change if you need another currency prefix.
+  - `VIEW_TIMEOUT_SECONDS`: Defaults to `3600`; controls how long action buttons stay active.
 
 ### Usage
 

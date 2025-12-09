@@ -54,6 +54,16 @@ def _positive_int(raw: str) -> int:
     return value
 
 
+def _read_timeout_seconds() -> int:
+    raw = os.environ.get("VIEW_TIMEOUT_SECONDS")
+    if raw is None:
+        return 3600
+    return _positive_int(raw)
+
+
+VIEW_TIMEOUT_SECONDS = _read_timeout_seconds()
+
+
 def build_signal_embed(signal: TradeSignal) -> discord.Embed:
     action = signal.action.upper()
     if action == "BUY":
@@ -88,7 +98,7 @@ class AckButton(discord.ui.Button):
 
 class AckView(discord.ui.View):
     def __init__(self, broker_url: Optional[str] = None) -> None:
-        super().__init__(timeout=3600)
+        super().__init__(timeout=VIEW_TIMEOUT_SECONDS)
         if broker_url:
             self.add_item(
                 discord.ui.Button(
@@ -193,8 +203,6 @@ def main() -> None:
     channel_id = os.environ.get("DISCORD_CHANNEL_ID")
     if not token or not channel_id:
         raise SystemExit("DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID environment variables are required.")
-    if token.count(".") < 2:
-        raise SystemExit("DISCORD_BOT_TOKEN does not appear to be in the expected format.")
 
     try:
         channel_id_int = int(channel_id)
