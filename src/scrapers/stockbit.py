@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import re
 from dataclasses import asdict
 from typing import Optional, List
 
@@ -12,6 +13,8 @@ from fake_useragent import UserAgent
 from src.data_ingestion import DataSource, Tick
 
 logger = logging.getLogger("STOCKBIT_SCRAPER")
+JSON_BRACKET_PATTERN = re.compile(r'[\[{]')
+LOG_PREVIEW_LENGTH = 100
 
 class StockbitLiveSource(DataSource):
     def __init__(self, symbol="BBRI", headless=True):
@@ -101,34 +104,43 @@ class StockbitLiveSource(DataSource):
         ws.on("framereceived", self.on_frame)
 
     def on_frame(self, frame):
-        """Parses incoming WSS frames."""
+        payload = None
         try:
             payload = frame.payload
             if isinstance(payload, bytes):
                 payload = payload.decode('utf-8')
 
-            # --- DEBUG MODE: PRINT EVERYTHING ---
-            # Once you see the logs, you can write the correct parsing logic
-            if "price" in payload or "last" in payload:
-                logger.info(f"CAPTURED FRAME: {payload[:200]}...") # Log first 200 chars
+            # --- HANDLE SOCKET.IO PREFIX (The Fix) ---
+            # Stockbit sends '42["trade",...]' which isn't valid JSON until stripped
+            if not (payload.startswith('{') or payload.startswith('[')):
+                # Look for the first JSON bracket
+                match = JSON_BRACKET_PATTERN.search(payload)
+                if match:
+                    payload = payload[match.start():]
+                else:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        preview = payload[:LOG_PREVIEW_LENGTH]
+                        logger.debug("Dropping non-JSON frame: %s", preview)
+                    return
 
-                # --- Quick Fix for common Socket.IO prefix ---
-                # Remove "42" or other prefixes if present
-                if payload.startswith('42['):
-                    json_str = payload[2:] # Strip '42'
-                    data = json.loads(json_str)
-                    # data is now ["event_name", {real_data}]
-                    # We expect the payload to be in the second element
-                    if len(data) > 1:
-                        real_payload = data[1]
-                        self.parse_and_enqueue(real_payload)
-                elif payload.startswith('{') or payload.startswith('['):
-                     # Direct JSON fallback
-                     data = json.loads(payload)
-                     self.parse_and_enqueue(data)
+            data = json.loads(payload)
+
+            # Handle list format: ["event_name", {data}]
+            if isinstance(data, list) and len(data) > 1:
+                real_data = data[1]
+                if isinstance(real_data, dict):
+                    self.parse_and_enqueue(real_data)
+            elif isinstance(data, dict):
+                self.parse_and_enqueue(data)
 
         except Exception as e:
-            pass
+            if logger.isEnabledFor(logging.DEBUG):
+                preview = payload[:LOG_PREVIEW_LENGTH] if isinstance(payload, str) else payload
+                logger.debug(
+                    "Frame parse failed for payload preview %s: %s",
+                    preview,
+                    e
+                )
 
     def parse_and_enqueue(self, data: dict):
         """Extracts fields and pushes Tick to Queue."""
