@@ -6,6 +6,8 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
+CURRENCY_PREFIX = os.environ.get("CURRENCY_PREFIX", "Rp")
+
 
 @dataclass(slots=True)
 class TradeSignal:
@@ -19,7 +21,7 @@ class TradeSignal:
 
 
 def _format_price(value: float) -> str:
-    return f"Rp {value:,.2f}"
+    return f"{CURRENCY_PREFIX} {value:,.2f}"
 
 
 def build_signal_embed(signal: TradeSignal) -> discord.Embed:
@@ -72,16 +74,29 @@ class SignalBot(commands.Bot):
         self._channel: Optional[discord.abc.Messageable] = None
 
     async def on_ready(self) -> None:
-        self._channel = self.get_channel(self.channel_id) or await self.fetch_channel(self.channel_id)
+        await self._ensure_channel()
         if self.initial_signal:
             await self.publish_signal(self.initial_signal)
 
+    async def _ensure_channel(self) -> discord.abc.Messageable:
+        if self._channel:
+            return self._channel
+        try:
+            channel = self.get_channel(self.channel_id) or await self.fetch_channel(self.channel_id)
+        except discord.NotFound as exc:
+            raise SystemExit(f"Channel {self.channel_id} was not found or the bot cannot access it.") from exc
+        except discord.Forbidden as exc:
+            raise SystemExit(f"Bot lacks permission to access channel {self.channel_id}.") from exc
+        except discord.HTTPException as exc:
+            raise SystemExit(f"Failed to fetch channel {self.channel_id}: {exc}") from exc
+        self._channel = channel
+        return channel
+
     async def publish_signal(self, signal: TradeSignal) -> None:
-        if not self._channel:
-            self._channel = self.get_channel(self.channel_id) or await self.fetch_channel(self.channel_id)
+        channel = await self._ensure_channel()
         embed = build_signal_embed(signal)
         view = AckView(signal.broker_url)
-        await self._channel.send(embed=embed, view=view)
+        await channel.send(embed=embed, view=view)
 
 
 def _parse_args() -> TradeSignal:
@@ -119,7 +134,7 @@ def _parse_args() -> TradeSignal:
     args = parser.parse_args()
     checks = [
         ("entry", args.entry, lambda v: v is not None and v > 0, "greater than zero"),
-        ("stop", args.stop, lambda v: v is not None and v >= 0, "zero or greater"),
+        ("stop", args.stop, lambda v: v is not None and v > 0, "greater than zero"),
         ("size", args.size, lambda v: v is not None and v > 0, "greater than zero"),
     ]
     for field_name, value, predicate, message in checks:
