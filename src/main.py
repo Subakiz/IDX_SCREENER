@@ -1,72 +1,85 @@
 import asyncio
 import uvloop
 import logging
+import multiprocessing
+import time
 from src.data_ingestion import MockIDXSource
 from src.database import MockDatabase
 from src.tda_engine import TDAEngine
 from src.mc_engine import MonteCarloEngine
 from src.strategy import HybridStrategy
 from src.discord_bot import DiscordNotifier
+from src.dashboard import run_dashboard_server
 
 # Configure Logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - [PROCESS %(processName)s] - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger("IDX_ALGO_CORE")
+logger = logging.getLogger("IDX_ALGO")
 
-async def main():
-    # Set high-performance event loop policy
+async def trading_core():
+    """The HFT Logic Loop (Runs on CPU Core 1)"""
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-    logger.info("Initializing Hybrid TDA-Probabilistic Trading System...")
+    logger.info("Initializing HFT Engine...")
 
     # 1. Initialize Components
     db = MockDatabase()
     data_source = MockIDXSource(symbol="BBRI.JK")
-
     tda = TDAEngine(window_size=50)
-    mc = MonteCarloEngine(simulations=500, horizon=5) # Lower sims for sandbox speed
-
-    notifier = DiscordNotifier(token=None) # Mock mode
-
+    mc = MonteCarloEngine(simulations=500, horizon=5)
+    notifier = DiscordNotifier(token=None)
     strategy = HybridStrategy(tda_engine=tda, mc_engine=mc)
 
+    # Pre-fill Strategy with DB history (The Fix for Risk B)
+    await db.connect() # Ensure DB connection for query
+    history = await db.query_history("BBRI.JK", 50)
+    if history:
+        # Note: query_history returns ascending order (oldest first)
+        strategy.load_initial_data([t.price for t in history])
+
     # 2. Start Services
-    await db.connect()
+    # db.connect() called above
     await data_source.connect()
     await notifier.start()
 
-    logger.info("System Live. Listening for ticks...")
+    logger.info("HFT Engine Live. Waiting for ticks...")
 
-    # 3. Event Loop
     try:
         while True:
             tick = await data_source.get_tick()
             if tick:
-                # Log occasional tick to show life
-                if int(tick.timestamp * 100) % 50 == 0:
-                    logger.debug(f"Tick: {tick.symbol} @ {tick.price}")
-
-                # Persist
+                # 1. Persist (IO Bound)
                 await db.write_tick(tick)
 
-                # Analyze
+                # 2. Analyze & Execute (CPU Bound)
                 signal = await strategy.on_tick(tick)
 
-                # Execute
                 if signal:
-                    logger.info(f"SIGNAL GENERATED: {signal}")
+                    logger.info(f"⚡ ACTION: {signal['action']} | {signal['reason']}")
                     await notifier.send_signal(signal)
 
-            # Yield control
+            # Zero-sleep allows other async tasks (like heartbeats) to run
             await asyncio.sleep(0)
 
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info("HFT Engine Stopping...")
+
+def start_dashboard():
+    """The Visual Server (Runs on CPU Core 2)"""
+    run_dashboard_server()
 
 if __name__ == "__main__":
+    # Use Multiprocessing to separate Trading Logic from Visual Rendering
+    # This ensures your GUI never lags your Order Execution
+
+    p1 = multiprocessing.Process(target=start_dashboard, name="Dashboard_Proc")
+    p1.start()
+
     try:
-        asyncio.run(main())
+        # Run the Async Trading Bot in the Main Process
+        asyncio.run(trading_core())
     except KeyboardInterrupt:
-        pass
+        logger.info("Main Process Shutdown.")
+        p1.terminate()
+        p1.join()

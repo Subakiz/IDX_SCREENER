@@ -18,51 +18,60 @@ class MonteCarloEngine:
     def simulate_paths(self, start_price: float, mu: float, sigma: float) -> SimulationResult:
         """
         Simulates future price paths using Geometric Brownian Motion with Jump Diffusion.
+        Vectorized using cumprod.
         """
-        # Time steps
         steps = self.horizon
 
-        # Initialize paths
-        # shape: (simulations, steps + 1)
-        prices = np.zeros((self.simulations, steps + 1))
-        prices[:, 0] = start_price
-
-        # Vectorized simulation
-        # Random normal shocks
+        # 1. Generate Returns Components
+        # Random normal shocks for GBM
+        # shape: (simulations, steps)
         Z = np.random.normal(0, 1, (self.simulations, steps))
 
-        # Jumps (Poisson process approx)
+        # Drift component (constant per step)
+        drift = (mu - 0.5 * sigma**2) * self.dt
+
+        # Diffusion component
+        diffusion = sigma * np.sqrt(self.dt) * Z
+
+        # Jump Diffusion
         # Lambda = 0.01 (1% chance of jump per step)
         jump_prob = 0.01
+        # Random choice for jumps: 1 if jump, 0 if not
         jumps = np.random.choice([0, 1], size=(self.simulations, steps), p=[1-jump_prob, jump_prob])
-        jump_magnitude = np.random.normal(-0.1, 0.05, (self.simulations, steps)) # Bearish skew for jumps
+        # Jump magnitude
+        jump_magnitude = np.random.normal(-0.1, 0.05, (self.simulations, steps)) # Bearish skew
 
-        for t in range(steps):
-            # GBM component
-            drift = (mu - 0.5 * sigma**2) * self.dt
-            diffusion = sigma * np.sqrt(self.dt) * Z[:, t]
+        jump_impact = jumps * jump_magnitude
 
-            # Jump component
-            jump_impact = jumps[:, t] * jump_magnitude[:, t]
+        # Total Log Returns
+        log_returns = drift + diffusion + jump_impact
 
-            # Update prices
-            ret = drift + diffusion + jump_impact
-            prices[:, t+1] = prices[:, t] * np.exp(ret)
+        # 2. Convert to Price Paths
+        # Cumulative sum of log returns -> Cumulative product of exponential returns
+        cum_log_returns = np.cumsum(log_returns, axis=1)
+        price_paths = start_price * np.exp(cum_log_returns)
 
-            # Apply ARB limits (simplified -35% from start approx)
-            # If price drops > 35% from start, it locks
-            arb_limit = start_price * 0.65
-            prices[:, t+1] = np.maximum(prices[:, t+1], arb_limit)
+        # Prepend start_price to each path for t=0
+        # shape becomes (simulations, steps + 1)
+        price_paths = np.hstack([np.full((self.simulations, 1), start_price), price_paths])
 
-        # Calculate statistics
-        median_path = np.median(prices, axis=0)
-        lower_bound = np.percentile(prices, 5, axis=0)
-        upper_bound = np.percentile(prices, 95, axis=0)
+        # 3. Apply Constraints (ARB)
+        # Vectorized ARB check is tricky because it's path dependent (if t hits ARB, does it stick?)
+        # For simplicity in vectorized form, we just cap the price at the limit.
+        # Ideally, ARB lock means liquidity dries up, but for price simulation:
+        arb_limit = start_price * 0.65
+        price_paths = np.maximum(price_paths, arb_limit)
+
+        # 4. Calculate Statistics
+        median_path = np.median(price_paths, axis=0)
+        lower_bound = np.percentile(price_paths, 5, axis=0)
+        upper_bound = np.percentile(price_paths, 95, axis=0)
 
         # Ruin: hitting ARB or Stop Loss (say 5% down)
         stop_loss = start_price * 0.95
         # Check if any point in the path dropped below stop loss
-        ruin_counts = np.sum(np.any(prices < stop_loss, axis=1))
+        # axis=1 checks across time steps for each simulation
+        ruin_counts = np.sum(np.any(price_paths < stop_loss, axis=1))
         ruin_prob = ruin_counts / self.simulations
 
         return SimulationResult(median_path, lower_bound, upper_bound, ruin_prob)

@@ -20,6 +20,13 @@ class HybridStrategy:
         self.THRESHOLD_CRASH = 100.0 # Arbitrary for simulation
         self.THRESHOLD_STABLE = 50.0
 
+    def load_initial_data(self, prices: list[float]):
+        """
+        Pre-fill the price history to avoid warm-up delay.
+        """
+        self.prices = prices
+        logger.info(f"Strategy initialized with {len(prices)} historical data points.")
+
     async def on_tick(self, tick: Tick) -> dict:
         """
         Process a new tick. Returns a Signal dict if action required, else None.
