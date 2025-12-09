@@ -104,27 +104,30 @@ class StockbitLiveSource(DataSource):
         """Parses incoming WSS frames."""
         try:
             payload = frame.payload
-            # Decode if bytes
             if isinstance(payload, bytes):
                 payload = payload.decode('utf-8')
 
-            # Stockbit/TradingView often use a prefix like "~m~" or JSON directly
-            # This logic is hypothetical based on common streaming patterns
-            # Real parsing requires inspecting the actual frame structure
+            # --- DEBUG MODE: PRINT EVERYTHING ---
+            # Once you see the logs, you can write the correct parsing logic
+            if "price" in payload or "last" in payload:
+                logger.info(f"CAPTURED FRAME: {payload[:200]}...") # Log first 200 chars
 
-            # Skip heartbeats or non-JSON
-            if not payload.startswith('{') and not payload.startswith('['):
-                return
-
-            data = json.loads(payload)
-
-            # Hypothetical Structure: {"type": "trade", "data": {...}}
-            # Adapt this block once real frame format is known
-            if "price" in str(data): # Naive check
-                self.parse_and_enqueue(data)
+                # --- Quick Fix for common Socket.IO prefix ---
+                # Remove "42" or other prefixes if present
+                if payload.startswith('42['):
+                    json_str = payload[2:] # Strip '42'
+                    data = json.loads(json_str)
+                    # data is now ["event_name", {real_data}]
+                    # We expect the payload to be in the second element
+                    if len(data) > 1:
+                        real_payload = data[1]
+                        self.parse_and_enqueue(real_payload)
+                elif payload.startswith('{') or payload.startswith('['):
+                     # Direct JSON fallback
+                     data = json.loads(payload)
+                     self.parse_and_enqueue(data)
 
         except Exception as e:
-            # logger.debug(f"Frame parse error: {e}")
             pass
 
     def parse_and_enqueue(self, data: dict):
