@@ -30,7 +30,7 @@ def _coerce_env_number(raw: Optional[str], cast: Callable[[str], T], env_name: s
         return None
     try:
         return cast(raw)
-    except (ValueError, argparse.ArgumentTypeError) as exc:
+    except Exception as exc:
         raise SystemExit(f"{env_name} must be numeric; received {raw!r}") from exc
 
 
@@ -55,10 +55,8 @@ def _positive_int(raw: str) -> int:
 
 
 def _read_timeout_seconds() -> int:
-    raw = os.environ.get("VIEW_TIMEOUT_SECONDS")
-    if raw is None:
-        return 3600
-    return _positive_int(raw)
+    timeout = _coerce_env_number(os.environ.get("VIEW_TIMEOUT_SECONDS"), _positive_int, "VIEW_TIMEOUT_SECONDS")
+    return timeout or 3600
 
 
 VIEW_TIMEOUT_SECONDS = _read_timeout_seconds()
