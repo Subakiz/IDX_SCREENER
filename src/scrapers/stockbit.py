@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import re
 from dataclasses import asdict
 from typing import Optional, List
 
@@ -12,6 +13,8 @@ from fake_useragent import UserAgent
 from src.data_ingestion import DataSource, Tick
 
 logger = logging.getLogger("STOCKBIT_SCRAPER")
+JSON_BRACKET_PATTERN = re.compile(r'[\[{]')
+LOG_PREVIEW_LENGTH = 100
 
 class StockbitLiveSource(DataSource):
     def __init__(self, symbol="BBRI", headless=True):
@@ -101,6 +104,7 @@ class StockbitLiveSource(DataSource):
         ws.on("framereceived", self.on_frame)
 
     def on_frame(self, frame):
+        payload = None
         try:
             payload = frame.payload
             if isinstance(payload, bytes):
@@ -109,12 +113,14 @@ class StockbitLiveSource(DataSource):
             # --- HANDLE SOCKET.IO PREFIX (The Fix) ---
             # Stockbit sends '42["trade",...]' which isn't valid JSON until stripped
             if not (payload.startswith('{') or payload.startswith('[')):
-                import re
                 # Look for the first JSON bracket
-                match = re.search(r'[\\[\\{]', payload)
+                match = JSON_BRACKET_PATTERN.search(payload)
                 if match:
                     payload = payload[match.start():]
                 else:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        preview = payload[:LOG_PREVIEW_LENGTH]
+                        logger.debug("Dropping non-JSON frame: %s", preview)
                     return
 
             data = json.loads(payload)
@@ -122,12 +128,19 @@ class StockbitLiveSource(DataSource):
             # Handle list format: ["event_name", {data}]
             if isinstance(data, list) and len(data) > 1:
                 real_data = data[1]
-                self.parse_and_enqueue(real_data)
+                if isinstance(real_data, dict):
+                    self.parse_and_enqueue(real_data)
             elif isinstance(data, dict):
                 self.parse_and_enqueue(data)
 
         except Exception as e:
-            pass # Keep streaming
+            if logger.isEnabledFor(logging.DEBUG):
+                preview = payload[:LOG_PREVIEW_LENGTH] if isinstance(payload, str) else payload
+                logger.debug(
+                    "Frame parse failed for payload preview %s: %s",
+                    preview,
+                    e
+                )
 
     def parse_and_enqueue(self, data: dict):
         """Extracts fields and pushes Tick to Queue."""
