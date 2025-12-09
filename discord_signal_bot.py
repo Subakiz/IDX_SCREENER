@@ -30,7 +30,7 @@ def _coerce_env_number(raw: Optional[str], cast: Callable[[str], T], env_name: s
         return None
     try:
         return cast(raw)
-    except ValueError as exc:
+    except (ValueError, argparse.ArgumentTypeError) as exc:
         raise SystemExit(f"{env_name} must be numeric; received {raw!r}") from exc
 
 
@@ -132,12 +132,9 @@ class SignalBot(commands.Bot):
 
 
 def _parse_args() -> TradeSignal:
-    env_entry = _coerce_env_number(os.environ.get("TRADE_ENTRY"), float, "TRADE_ENTRY")
-    env_stop = _coerce_env_number(os.environ.get("TRADE_STOP"), float, "TRADE_STOP")
-    env_size = _coerce_env_number(os.environ.get("TRADE_SIZE_LOTS"), int, "TRADE_SIZE_LOTS")
-    for name, value in (("TRADE_ENTRY", env_entry), ("TRADE_STOP", env_stop), ("TRADE_SIZE_LOTS", env_size)):
-        if value is not None and value <= 0:
-            raise SystemExit(f"{name} must be greater than zero when provided.")
+    env_entry = _coerce_env_number(os.environ.get("TRADE_ENTRY"), _positive_float, "TRADE_ENTRY")
+    env_stop = _coerce_env_number(os.environ.get("TRADE_STOP"), _positive_float, "TRADE_STOP")
+    env_size = _coerce_env_number(os.environ.get("TRADE_SIZE_LOTS"), _positive_int, "TRADE_SIZE_LOTS")
 
     parser = argparse.ArgumentParser(description="Dispatch a trade signal to Discord.")
     parser.add_argument("--symbol", default=os.environ.get("TRADE_SYMBOL", "BBRI"), help="Ticker symbol, e.g. BBRI.JK")
@@ -146,19 +143,22 @@ def _parse_args() -> TradeSignal:
         "--entry",
         type=_positive_float,
         default=env_entry,
-        help="Entry price (required)",
+        required=env_entry is None,
+        help="Entry price (required unless TRADE_ENTRY is set)",
     )
     parser.add_argument(
         "--stop",
         type=_positive_float,
         default=env_stop,
-        help="Stop loss price (required)",
+        required=env_stop is None,
+        help="Stop loss price (required unless TRADE_STOP is set)",
     )
     parser.add_argument(
         "--size",
         type=_positive_int,
         default=env_size,
-        help="Order size in lots (required)",
+        required=env_size is None,
+        help="Order size in lots (required unless TRADE_SIZE_LOTS is set)",
     )
     parser.add_argument("--note", default=os.environ.get("TRADE_NOTE"), help="Optional free-form note")
     parser.add_argument(
@@ -167,6 +167,9 @@ def _parse_args() -> TradeSignal:
         help="Optional link button destination (e.g., broker trade ticket).",
     )
     args = parser.parse_args()
+    if args.entry is None or args.stop is None or args.size is None:
+        parser.error("Entry, stop, and size are required (via CLI flags or environment defaults).")
+
     return TradeSignal(
         symbol=args.symbol,
         action=args.action,
