@@ -1,0 +1,11 @@
+numpy
+pandas
+scipy
+giotto-tda
+plotly
+dash
+discord.py
+websockets
+aiohttp
+questdb
+uvloop
