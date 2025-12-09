@@ -192,5 +192,6 @@ def main() -> None:
     signal = _parse_args()
     bot = SignalBot(channel_id_int, initial_signal=signal)
     bot.run(token)
+
 if __name__ == "__main__":
     main()
