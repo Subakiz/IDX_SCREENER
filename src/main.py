@@ -1,72 +1,105 @@
 import asyncio
 import uvloop
 import logging
-from src.data_ingestion import MockIDXSource
+import multiprocessing
+import time
+from multiprocessing import Queue
+
+from src.scrapers.stockbit import StockbitLiveSource
 from src.database import MockDatabase
 from src.tda_engine import TDAEngine
 from src.mc_engine import MonteCarloEngine
 from src.strategy import HybridStrategy
 from src.discord_bot import DiscordNotifier
+from src.dashboard import run_dashboard_server
 
 # Configure Logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - [PROCESS %(processName)s] - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger("IDX_ALGO_CORE")
+logger = logging.getLogger("IDX_ALGO")
 
-async def main():
-    # Set high-performance event loop policy
+async def trading_core(tick_queue: Queue):
+    """The HFT Logic Loop (Runs on CPU Core 1)"""
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-    logger.info("Initializing Hybrid TDA-Probabilistic Trading System...")
+    logger.info("Initializing HFT Engine...")
 
     # 1. Initialize Components
     db = MockDatabase()
-    data_source = MockIDXSource(symbol="BBRI.JK")
+
+    # Switch to StockbitLiveSource
+    # Note: Headless=True by default. Set False for debugging/login.
+    data_source = StockbitLiveSource(symbol="BBRI", headless=True)
+    data_source.queue = tick_queue # Inject Queue for real-time passing
 
     tda = TDAEngine(window_size=50)
-    mc = MonteCarloEngine(simulations=500, horizon=5) # Lower sims for sandbox speed
-
-    notifier = DiscordNotifier(token=None) # Mock mode
-
+    mc = MonteCarloEngine(simulations=500, horizon=5)
+    notifier = DiscordNotifier(token=None)
     strategy = HybridStrategy(tda_engine=tda, mc_engine=mc)
 
-    # 2. Start Services
+    # Pre-fill Strategy with DB history
     await db.connect()
-    await data_source.connect()
+    history = await db.query_history("BBRI", 50)
+    if history:
+        strategy.load_initial_data([t.price for t in history])
+
+    # 2. Start Services
+    # Connect DataSource (This launches Playwright)
+    # Ideally, we run data_source.connect() as a task because it blocks on while loop
+
     await notifier.start()
 
-    logger.info("System Live. Listening for ticks...")
+    logger.info("HFT Engine Live. Launching Scraper...")
 
-    # 3. Event Loop
+    # Create background task for scraper
+    scraper_task = asyncio.create_task(data_source.connect())
+
     try:
         while True:
-            tick = await data_source.get_tick()
-            if tick:
-                # Log occasional tick to show life
-                if int(tick.timestamp * 100) % 50 == 0:
-                    logger.debug(f"Tick: {tick.symbol} @ {tick.price}")
+            # We consume from the Queue populated by the Scraper
+            # Check queue non-blocking
+            while not tick_queue.empty():
+                tick = tick_queue.get()
 
-                # Persist
-                await db.write_tick(tick)
+                if tick:
+                    # 1. Persist (IO Bound)
+                    await db.write_tick(tick)
 
-                # Analyze
-                signal = await strategy.on_tick(tick)
+                    # 2. Analyze & Execute (CPU Bound)
+                    signal = await strategy.on_tick(tick)
 
-                # Execute
-                if signal:
-                    logger.info(f"SIGNAL GENERATED: {signal}")
-                    await notifier.send_signal(signal)
+                    if signal:
+                        logger.info(f"⚡ ACTION: {signal['action']} | {signal['reason']}")
+                        await notifier.send_signal(signal)
 
-            # Yield control
-            await asyncio.sleep(0)
+            # Zero-sleep yield
+            await asyncio.sleep(0.01)
 
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info("HFT Engine Stopping...")
+        scraper_task.cancel()
+    except Exception as e:
+        logger.error(f"Core Error: {e}")
+
+def start_dashboard():
+    """The Visual Server (Runs on CPU Core 2)"""
+    # Dash reads from SQLite directly, so we don't need to pass the queue here
+    # unless we wanted to implement a live update via websocket/server-sent-events
+    # For now, polling DB is robust.
+    run_dashboard_server()
 
 if __name__ == "__main__":
+    # IPC Queue
+    tick_queue = multiprocessing.Queue()
+
+    p1 = multiprocessing.Process(target=start_dashboard, name="Dashboard_Proc")
+    p1.start()
+
     try:
-        asyncio.run(main())
+        # Run the Async Trading Bot in the Main Process
+        asyncio.run(trading_core(tick_queue))
     except KeyboardInterrupt:
-        pass
+        logger.info("Main Process Shutdown.")
+        p1.terminate()
+        p1.join()
