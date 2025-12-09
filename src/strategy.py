@@ -70,7 +70,11 @@ class HybridStrategy:
             buy_zone = mc_res.lower_bound[1] # Next step lower bound
 
             # Order Book Imbalance
-            obi = (tick.bid_vol - tick.ask_vol) / (tick.bid_vol + tick.ask_vol)
+            total_vol = tick.bid_vol + tick.ask_vol
+            if total_vol > 0:
+                obi = (tick.bid_vol - tick.ask_vol) / total_vol
+            else:
+                obi = 0.0 # Neutral if no data
 
             if tick.price <= buy_zone and obi > 0.3:
                 # Calculate Size
