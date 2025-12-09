@@ -117,9 +117,14 @@ def _parse_args() -> TradeSignal:
         help="Optional link button destination (e.g., broker trade ticket).",
     )
     args = parser.parse_args()
-    for field_name, value in (("entry", args.entry), ("stop", args.stop), ("size", args.size)):
-        if value is None or value <= 0:
-            parser.error(f"--{field_name} must be provided and greater than zero")
+    checks = [
+        ("entry", args.entry, lambda v: v is not None and v > 0, "greater than zero"),
+        ("stop", args.stop, lambda v: v is not None and v >= 0, "zero or greater"),
+        ("size", args.size, lambda v: v is not None and v > 0, "greater than zero"),
+    ]
+    for field_name, value, predicate, message in checks:
+        if not predicate(value):
+            parser.error(f"--{field_name} must be provided and {message}")
 
     return TradeSignal(
         symbol=args.symbol,
@@ -141,7 +146,6 @@ def main() -> None:
     signal = _parse_args()
     bot = SignalBot(int(channel_id), initial_signal=signal)
     bot.run(token)
-
 
 if __name__ == "__main__":
     main()
