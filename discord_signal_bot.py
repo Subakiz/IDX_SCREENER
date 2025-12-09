@@ -34,6 +34,26 @@ def _coerce_env_number(raw: Optional[str], cast: Callable[[str], T], env_name: s
         raise SystemExit(f"{env_name} must be numeric; received {raw!r}") from exc
 
 
+def _positive_float(raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a valid number.") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("Value must be greater than zero.")
+    return value
+
+
+def _positive_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a valid integer.") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("Value must be greater than zero.")
+    return value
+
+
 def build_signal_embed(signal: TradeSignal) -> discord.Embed:
     action = signal.action.upper()
     color = discord.Color.green() if action == "BUY" else discord.Color.red()
@@ -54,7 +74,7 @@ class AckButton(discord.ui.Button):
     def __init__(self) -> None:
         super().__init__(style=discord.ButtonStyle.primary, label="Mark Executed", custom_id="signal_ack")
 
-    async def callback(self, interaction: discord.Interaction) -> None:  # type: ignore[override]
+    async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
             "Execution acknowledged. Please finalize the order in your broker app.",
             ephemeral=True,
@@ -101,8 +121,6 @@ class SignalBot(commands.Bot):
             raise SystemExit(f"Bot lacks permission to access channel {self.channel_id}.") from exc
         except discord.HTTPException as exc:
             raise SystemExit(f"Failed to fetch channel {self.channel_id}: {exc}") from exc
-        if channel is None:
-            raise SystemExit(f"Channel {self.channel_id} could not be resolved.")
         self._channel = channel
         return channel
 
@@ -117,25 +135,28 @@ def _parse_args() -> TradeSignal:
     env_entry = _coerce_env_number(os.environ.get("TRADE_ENTRY"), float, "TRADE_ENTRY")
     env_stop = _coerce_env_number(os.environ.get("TRADE_STOP"), float, "TRADE_STOP")
     env_size = _coerce_env_number(os.environ.get("TRADE_SIZE_LOTS"), int, "TRADE_SIZE_LOTS")
+    for name, value in (("TRADE_ENTRY", env_entry), ("TRADE_STOP", env_stop), ("TRADE_SIZE_LOTS", env_size)):
+        if value is not None and value <= 0:
+            raise SystemExit(f"{name} must be greater than zero when provided.")
 
     parser = argparse.ArgumentParser(description="Dispatch a trade signal to Discord.")
     parser.add_argument("--symbol", default=os.environ.get("TRADE_SYMBOL", "BBRI"), help="Ticker symbol, e.g. BBRI.JK")
     parser.add_argument("--action", default=os.environ.get("TRADE_ACTION", "BUY"), help="BUY or SELL")
     parser.add_argument(
         "--entry",
-        type=float,
+        type=_positive_float,
         default=env_entry,
         help="Entry price (required)",
     )
     parser.add_argument(
         "--stop",
-        type=float,
+        type=_positive_float,
         default=env_stop,
         help="Stop loss price (required)",
     )
     parser.add_argument(
         "--size",
-        type=int,
+        type=_positive_int,
         default=env_size,
         help="Order size in lots (required)",
     )
@@ -146,15 +167,6 @@ def _parse_args() -> TradeSignal:
         help="Optional link button destination (e.g., broker trade ticket).",
     )
     args = parser.parse_args()
-    checks = [
-        ("entry", args.entry, lambda v: v is not None and v > 0, "greater than zero"),
-        ("stop", args.stop, lambda v: v is not None and v > 0, "greater than zero"),
-        ("size", args.size, lambda v: v is not None and v > 0, "greater than zero"),
-    ]
-    for field_name, value, predicate, message in checks:
-        if not predicate(value):
-            parser.error(f"--{field_name} must be provided and {message}")
-
     return TradeSignal(
         symbol=args.symbol,
         action=args.action,
