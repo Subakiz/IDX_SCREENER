@@ -7,9 +7,8 @@ import discord
 from discord.ext import commands
 
 
-@dataclass
+@dataclass(slots=True)
 class TradeSignal:
-    __slots__ = ("symbol", "action", "entry", "stop_loss", "size_lots", "note", "broker_url")
     symbol: str
     action: str
     entry: float
@@ -72,9 +71,6 @@ class SignalBot(commands.Bot):
         self.initial_signal = initial_signal
         self._channel: Optional[discord.abc.Messageable] = None
 
-    async def setup_hook(self) -> None:
-        self.add_view(AckView())  # persistent handler for acknowledgement button
-
     async def on_ready(self) -> None:
         self._channel = self.get_channel(self.channel_id) or await self.fetch_channel(self.channel_id)
         if self.initial_signal:
@@ -89,12 +85,31 @@ class SignalBot(commands.Bot):
 
 
 def _parse_args() -> TradeSignal:
+    env_entry = os.environ.get("TRADE_ENTRY")
+    env_stop = os.environ.get("TRADE_STOP")
+    env_size = os.environ.get("TRADE_SIZE_LOTS")
+
     parser = argparse.ArgumentParser(description="Dispatch a trade signal to Discord.")
     parser.add_argument("--symbol", default=os.environ.get("TRADE_SYMBOL", "BBRI"), help="Ticker symbol, e.g. BBRI.JK")
     parser.add_argument("--action", default=os.environ.get("TRADE_ACTION", "BUY"), help="BUY or SELL")
-    parser.add_argument("--entry", type=float, default=float(os.environ.get("TRADE_ENTRY", "0")), help="Entry price")
-    parser.add_argument("--stop", type=float, default=float(os.environ.get("TRADE_STOP", "0")), help="Stop loss price")
-    parser.add_argument("--size", type=int, default=int(os.environ.get("TRADE_SIZE_LOTS", "0")), help="Order size in lots")
+    parser.add_argument(
+        "--entry",
+        type=float,
+        default=float(env_entry) if env_entry else None,
+        help="Entry price (required)",
+    )
+    parser.add_argument(
+        "--stop",
+        type=float,
+        default=float(env_stop) if env_stop else None,
+        help="Stop loss price (required)",
+    )
+    parser.add_argument(
+        "--size",
+        type=int,
+        default=int(env_size) if env_size else None,
+        help="Order size in lots (required)",
+    )
     parser.add_argument("--note", default=os.environ.get("TRADE_NOTE"), help="Optional free-form note")
     parser.add_argument(
         "--broker-url",
@@ -102,6 +117,10 @@ def _parse_args() -> TradeSignal:
         help="Optional link button destination (e.g., broker trade ticket).",
     )
     args = parser.parse_args()
+    for field_name, value in (("entry", args.entry), ("stop", args.stop), ("size", args.size)):
+        if value is None or value <= 0:
+            parser.error(f"--{field_name} must be provided and greater than zero")
+
     return TradeSignal(
         symbol=args.symbol,
         action=args.action,

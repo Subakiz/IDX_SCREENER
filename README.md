@@ -39,7 +39,7 @@ python discord_signal_bot.py \
   --note "TDA stable regime; buy-the-dip"
 ```
 
-The bot posts an embed with entry, stop, size, and an **Mark Executed** action button. If `BROKER_URL` is set, an **Open Broker** link button is also shown for quick navigation to your trading app.
+The bot posts an embed with entry, stop, size, and a **Mark Executed** action button. If `BROKER_URL` is set, an **Open Broker** link button is also shown for quick navigation to your trading app.
 
 ### Notes
 
