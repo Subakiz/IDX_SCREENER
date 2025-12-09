@@ -6,7 +6,7 @@ import time
 from multiprocessing import Queue
 
 from src.scrapers.stockbit import StockbitLiveSource
-from src.database import MockDatabase
+from src.database_sqlite import SQLiteAdapter
 from src.tda_engine import TDAEngine
 from src.mc_engine import MonteCarloEngine
 from src.strategy import HybridStrategy
@@ -26,7 +26,8 @@ async def trading_core(tick_queue: Queue):
     logger.info("Initializing HFT Engine...")
 
     # 1. Initialize Components
-    db = MockDatabase()
+    db = SQLiteAdapter()
+    await db.connect()
 
     # Switch to StockbitLiveSource
     # Note: Headless=True by default. Set False for debugging/login.

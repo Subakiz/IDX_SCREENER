@@ -9,3 +9,6 @@ websockets
 aiohttp
 questdb
 uvloop
+aiosqlite
+playwright
+fake-useragent
