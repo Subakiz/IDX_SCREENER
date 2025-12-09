@@ -88,7 +88,7 @@ class AckButton(discord.ui.Button):
 
 class AckView(discord.ui.View):
     def __init__(self, broker_url: Optional[str] = None) -> None:
-        super().__init__(timeout=None)
+        super().__init__(timeout=3600)
         if broker_url:
             self.add_item(
                 discord.ui.Button(
@@ -111,7 +111,10 @@ class SignalBot(commands.Bot):
     async def on_ready(self) -> None:
         await self._ensure_channel()
         if self.initial_signal:
-            await self.publish_signal(self.initial_signal)
+            try:
+                await self.publish_signal(self.initial_signal)
+            except discord.HTTPException as exc:
+                raise SystemExit(f"Failed to send initial signal: {exc}") from exc
 
     async def _ensure_channel(self) -> discord.abc.Messageable:
         if self._channel:
@@ -190,6 +193,8 @@ def main() -> None:
     channel_id = os.environ.get("DISCORD_CHANNEL_ID")
     if not token or not channel_id:
         raise SystemExit("DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID environment variables are required.")
+    if token.count(".") < 2:
+        raise SystemExit("DISCORD_BOT_TOKEN does not appear to be in the expected format.")
 
     try:
         channel_id_int = int(channel_id)
