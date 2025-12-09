@@ -56,7 +56,12 @@ def _positive_int(raw: str) -> int:
 
 def build_signal_embed(signal: TradeSignal) -> discord.Embed:
     action = signal.action.upper()
-    color = discord.Color.green() if action == "BUY" else discord.Color.red()
+    if action == "BUY":
+        color = discord.Color.green()
+    elif action == "SELL":
+        color = discord.Color.red()
+    else:
+        color = discord.Color.blurple()
     embed = discord.Embed(
         title=f"{action} {signal.symbol}",
         description="Semi-automated trade signal",
@@ -121,6 +126,8 @@ class SignalBot(commands.Bot):
             raise SystemExit(f"Bot lacks permission to access channel {self.channel_id}.") from exc
         except discord.HTTPException as exc:
             raise SystemExit(f"Failed to fetch channel {self.channel_id}: {exc}") from exc
+        if not isinstance(channel, discord.abc.Messageable):
+            raise SystemExit(f"Channel {self.channel_id} cannot receive messages.")
         self._channel = channel
         return channel
 
@@ -167,9 +174,6 @@ def _parse_args() -> TradeSignal:
         help="Optional link button destination (e.g., broker trade ticket).",
     )
     args = parser.parse_args()
-    if args.entry is None or args.stop is None or args.size is None:
-        parser.error("Entry, stop, and size are required (via CLI flags or environment defaults).")
-
     return TradeSignal(
         symbol=args.symbol,
         action=args.action,
