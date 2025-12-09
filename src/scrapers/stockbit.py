@@ -112,20 +112,25 @@ class StockbitLiveSource(DataSource):
             if "price" in payload or "last" in payload:
                 logger.info(f"CAPTURED FRAME: {payload[:200]}...") # Log first 200 chars
 
-                # --- Quick Fix for common Socket.IO prefix ---
-                # Remove "42" or other prefixes if present
-                if payload.startswith('42['):
-                    json_str = payload[2:] # Strip '42'
-                    data = json.loads(json_str)
-                    # data is now ["event_name", {real_data}]
-                    # We expect the payload to be in the second element
-                    if len(data) > 1:
-                        real_payload = data[1]
-                        self.parse_and_enqueue(real_payload)
-                elif payload.startswith('{') or payload.startswith('['):
-                     # Direct JSON fallback
-                     data = json.loads(payload)
-                     self.parse_and_enqueue(data)
+                # --- HANDLE SOCKET.IO PREFIX (The Fix) ---
+                # Stockbit sends '42["trade",...]' which isn't valid JSON until stripped
+                if not (payload.startswith('{') or payload.startswith('[')):
+                    import re
+                    # Look for the first JSON bracket
+                    match = re.search(r'[\[\{]', payload)
+                    if match:
+                        payload = payload[match.start():]
+                    else:
+                        return
+
+                data = json.loads(payload)
+
+                # Handle list format: ["event_name", {data}]
+                if isinstance(data, list) and len(data) > 1:
+                    real_data = data[1]
+                    self.parse_and_enqueue(real_data)
+                elif isinstance(data, dict):
+                    self.parse_and_enqueue(data)
 
         except Exception as e:
             pass
