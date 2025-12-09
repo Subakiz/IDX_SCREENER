@@ -24,6 +24,15 @@ def _format_price(value: float) -> str:
     return f"{CURRENCY_PREFIX} {value:,.2f}"
 
 
+def _coerce_env_number(raw: Optional[str], cast, env_name: str) -> Optional[float]:
+    if raw is None:
+        return None
+    try:
+        return cast(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{env_name} must be numeric; received {raw!r}") from exc
+
+
 def build_signal_embed(signal: TradeSignal) -> discord.Embed:
     action = signal.action.upper()
     color = discord.Color.green() if action == "BUY" else discord.Color.red()
@@ -82,7 +91,9 @@ class SignalBot(commands.Bot):
         if self._channel:
             return self._channel
         try:
-            channel = self.get_channel(self.channel_id) or await self.fetch_channel(self.channel_id)
+            channel = self.get_channel(self.channel_id)
+            if channel is None:
+                channel = await self.fetch_channel(self.channel_id)
         except discord.NotFound as exc:
             raise SystemExit(f"Channel {self.channel_id} was not found or the bot cannot access it.") from exc
         except discord.Forbidden as exc:
@@ -100,9 +111,9 @@ class SignalBot(commands.Bot):
 
 
 def _parse_args() -> TradeSignal:
-    env_entry = os.environ.get("TRADE_ENTRY")
-    env_stop = os.environ.get("TRADE_STOP")
-    env_size = os.environ.get("TRADE_SIZE_LOTS")
+    env_entry = _coerce_env_number(os.environ.get("TRADE_ENTRY"), float, "TRADE_ENTRY")
+    env_stop = _coerce_env_number(os.environ.get("TRADE_STOP"), float, "TRADE_STOP")
+    env_size = _coerce_env_number(os.environ.get("TRADE_SIZE_LOTS"), int, "TRADE_SIZE_LOTS")
 
     parser = argparse.ArgumentParser(description="Dispatch a trade signal to Discord.")
     parser.add_argument("--symbol", default=os.environ.get("TRADE_SYMBOL", "BBRI"), help="Ticker symbol, e.g. BBRI.JK")
@@ -110,19 +121,19 @@ def _parse_args() -> TradeSignal:
     parser.add_argument(
         "--entry",
         type=float,
-        default=float(env_entry) if env_entry else None,
+        default=env_entry if env_entry is not None else None,
         help="Entry price (required)",
     )
     parser.add_argument(
         "--stop",
         type=float,
-        default=float(env_stop) if env_stop else None,
+        default=env_stop if env_stop is not None else None,
         help="Stop loss price (required)",
     )
     parser.add_argument(
         "--size",
         type=int,
-        default=int(env_size) if env_size else None,
+        default=env_size if env_size is not None else None,
         help="Order size in lots (required)",
     )
     parser.add_argument("--note", default=os.environ.get("TRADE_NOTE"), help="Optional free-form note")
@@ -158,8 +169,13 @@ def main() -> None:
     if not token or not channel_id:
         raise SystemExit("DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID environment variables are required.")
 
+    try:
+        channel_id_int = int(channel_id)
+    except ValueError as exc:
+        raise SystemExit("DISCORD_CHANNEL_ID must be numeric.") from exc
+
     signal = _parse_args()
-    bot = SignalBot(int(channel_id), initial_signal=signal)
+    bot = SignalBot(channel_id_int, initial_signal=signal)
     bot.run(token)
 
 if __name__ == "__main__":
