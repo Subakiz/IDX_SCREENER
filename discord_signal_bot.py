@@ -1,12 +1,13 @@
 import argparse
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 import discord
 from discord.ext import commands
 
 CURRENCY_PREFIX = os.environ.get("CURRENCY_PREFIX", "Rp")
+T = TypeVar("T", int, float)
 
 
 @dataclass(slots=True)
@@ -24,7 +25,7 @@ def _format_price(value: float) -> str:
     return f"{CURRENCY_PREFIX} {value:,.2f}"
 
 
-def _coerce_env_number(raw: Optional[str], cast, env_name: str) -> Optional[float]:
+def _coerce_env_number(raw: Optional[str], cast: Callable[[str], T], env_name: str) -> Optional[T]:
     if raw is None:
         return None
     try:
@@ -100,6 +101,8 @@ class SignalBot(commands.Bot):
             raise SystemExit(f"Bot lacks permission to access channel {self.channel_id}.") from exc
         except discord.HTTPException as exc:
             raise SystemExit(f"Failed to fetch channel {self.channel_id}: {exc}") from exc
+        if channel is None:
+            raise SystemExit(f"Channel {self.channel_id} could not be resolved.")
         self._channel = channel
         return channel
 
@@ -121,19 +124,19 @@ def _parse_args() -> TradeSignal:
     parser.add_argument(
         "--entry",
         type=float,
-        default=env_entry if env_entry is not None else None,
+        default=env_entry,
         help="Entry price (required)",
     )
     parser.add_argument(
         "--stop",
         type=float,
-        default=env_stop if env_stop is not None else None,
+        default=env_stop,
         help="Stop loss price (required)",
     )
     parser.add_argument(
         "--size",
         type=int,
-        default=env_size if env_size is not None else None,
+        default=env_size,
         help="Order size in lots (required)",
     )
     parser.add_argument("--note", default=os.environ.get("TRADE_NOTE"), help="Optional free-form note")
